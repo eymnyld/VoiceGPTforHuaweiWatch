@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/icon.png" width="128" alt="HuaSideload icon"></p>
+<p align="center"><img src="docs/icon.png" width="128" alt="VoiceGPT for Huawei Watch icon"></p>
 
 <h1 align="center">VoiceGPT for Huawei Watch</h1>
 
