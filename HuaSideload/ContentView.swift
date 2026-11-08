@@ -24,6 +24,10 @@ struct ContentView: View {
         TabView(selection: $tab) {
             page(AppInfo.displayName) {
                 statusSection
+                if link.isPaired && !filmMode,
+                   let feature = link.features.compactMap({ $0 as? HermesFeature }).first {
+                    VoiceFavoritesSection(feature: feature)
+                }
                 if link.connectedName == nil && !link.isConnecting {
                     devicesSection
                 } else {
@@ -78,6 +82,9 @@ struct ContentView: View {
         }
         // While filming, identities (UDID, serial number, MAC) always stay masked, in the log too
         .onAppear { if filmMode { link.revealIdentity = false } }
+        .onChange(of: language) { _, _ in
+            link.features.compactMap { $0 as? HermesFeature }.first?.sendFavorites()
+        }
         .onChange(of: filmMode) { _, on in if on { link.revealIdentity = false } }
     }
 

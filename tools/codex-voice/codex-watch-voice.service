@@ -1,0 +1,11 @@
+[Unit]
+Description=HuaSideload Codex Voice bridge
+
+[Service]
+ExecStart=%h/.local/share/codex-voice/venv/bin/python %h/.local/share/codex-voice/bridge.py
+Restart=on-failure
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

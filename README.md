@@ -1,6 +1,6 @@
 <p align="center"><img src="docs/icon.png" width="128" alt="HuaSideload icon"></p>
 
-<h1 align="center">HuaSideload</h1>
+<h1 align="center">VoiceGPT for Huawei Watch</h1>
 
 <p align="center"><b>Sideload your own apps and music onto Huawei watches from an iPhone.</b><br>No Android phone needed.</p>
 
@@ -20,6 +20,43 @@ The Huawei protocol is a Swift port of [Gadgetbridge](https://codeberg.org/Freey
 implementation. The app UI is available in **English and Turkish** (globe menu, top right).
 
 ---
+
+## Set up Voice
+
+This HuaSideload fork adds voice conversations to Huawei watches with Bluetooth calling and support for signed Lite Wearable apps. The voice path was developed for the Huawei Watch Fit 2.
+
+1. On a Mac with Xcode, install XcodeGen, clone this repository, and copy `Config/local.env.example` to `Config/local.env`. Set your Apple Team ID and iPhone bundle identifier, then run `./generate.sh`.
+2. Follow [the watch signing guide](#41-huawei-developer-account-and-signing-once) to register your watch and create a debug profile for the Voice app. Use the watch bundle identifier in `watch-apps/hermes/entry/src/main/config.json`. If you change it, update the matching identifier in `HuaSideload/HermesFeature.swift`.
+3. Build and sign the watch app with `tools/build-watch-app.sh watch-apps/hermes`. It writes `WatchApps/Voice.bin`. Run `./generate.sh` again, open the generated project, and run HuaSideload on your iPhone.
+4. Pair the watch in HuaSideload and connect it for Bluetooth calls in iPhone Settings. In HuaSideload, open **Install → Install Voice**.
+5. Open **Features → Voice Providers** on the iPhone. Configure a provider and star it to add it to the watch home screen. Open **Voice** on the watch, choose a provider, and answer the Bluetooth call on the watch.
+
+Choose **English** or **Türkçe** from the iPhone’s globe menu. The watch follows the selected language. Hermes and Claude use the matching offline dictation language.
+
+| Provider | iPhone setup |
+| --- | --- |
+| Hermes Call | Enter your Hermes server HTTPS URL and its API key in the Hermes section. The phone transcribes your speech and reads responses aloud. |
+| ChatGPT Voice | Enter the secure WebSocket URL and bearer secret for your own Codex bridge. The bridge streams live audio through Codex WebRTC. |
+| Claude Voice | Enter an Anthropic Messages HTTPS URL, model ID and API key. For an OpenAI-compatible gateway, enable that option and enter its URL, model and key. The phone reads Claude’s text responses aloud. |
+
+### Run the Codex Voice bridge
+
+On a trusted host, install Codex CLI and sign in with `codex login` as the user that will run the bridge. The included service expects the CLI at `~/.local/bin/codex`. Adjust the path in `bridge.py` if your installation differs.
+
+```sh
+install -d -m 700 ~/.local/share/codex-voice ~/.config/codex-voice
+install -d ~/.config/systemd/user
+install -m 600 tools/codex-voice/bridge.py ~/.local/share/codex-voice/
+install -m 644 tools/codex-voice/codex-watch-voice.service ~/.config/systemd/user/
+python3 -m venv ~/.local/share/codex-voice/venv
+~/.local/share/codex-voice/venv/bin/pip install aiohttp aiortc
+```
+
+Create a strong, unique bearer secret with your password manager. Save it as the only line in `~/.config/codex-voice/key` and give that file mode `600`. Run `systemctl --user daemon-reload` and `systemctl --user enable --now codex-watch-voice.service`. The bridge listens on the host’s loopback interface on port 18643.
+
+Configure your HTTPS reverse proxy to forward `/codex-voice` to `localhost:18643` with WebSocket upgrades. Use a certificate trusted by your iPhone and restrict access to your private network. Enter the resulting `wss://` URL and the same bearer secret in **ChatGPT Voice Settings** on your iPhone.
+
+The iPhone bridge and watch app use separate signing credentials. Keep local settings, bearer secrets, certificates, debug profiles, and signed watch packages out of commits. The voice additions were developed with AI assistance.
 
 ## Contents
 1. [What it does and doesn't do](#1-what-it-does-and-doesnt-do)

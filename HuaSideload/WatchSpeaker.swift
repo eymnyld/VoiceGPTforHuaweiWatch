@@ -43,6 +43,67 @@ final class WatchSpeaker: NSObject, ObservableObject, CXProviderDelegate {
     private let provider: CXProvider
     private var callID: UUID?
     private var engine: AVAudioEngine?
+    private var callAudioPlayer: AVAudioPlayerNode?
+    private var usesCallAudio = false
+    private var hermesReady: (() -> Void)?
+    private var hermesEnded: (() -> Void)?
+    private var hermesInput: ((AVAudioPCMBuffer) -> Void)?
+    private var inputTapped = false
+
+    var hasWatchAudio: Bool {
+        session.currentRoute.outputs.contains { Self.isHuaweiWatch($0) }
+    }
+
+    private var hasHermesRoute: Bool {
+        hasWatchAudio && (hermesInput == nil || session.currentRoute.inputs.contains(where: Self.isHuaweiWatch))
+    }
+
+    private static func isHuaweiWatch(_ port: AVAudioSessionPortDescription) -> Bool {
+        port.portType == .bluetoothHFP && (port.portName.localizedCaseInsensitiveContains("HUAWEI") ||
+            port.portName.localizedCaseInsensitiveContains("WATCH FIT"))
+    }
+
+    func ringForHermes(input: ((AVAudioPCMBuffer) -> Void)? = nil,
+                       playCallAudio: Bool = false,
+                       ready: @escaping () -> Void, ended: @escaping () -> Void) -> Bool {
+        guard state == .idle else { return false }
+        hermesReady = ready
+        hermesEnded = ended
+        hermesInput = input
+        usesCallAudio = playCallAudio
+        ring()
+        if state == .idle {
+            clearHermesCall()
+            return false
+        }
+        return true
+    }
+
+    func playCallPCM(_ data: Data) {
+        guard let player = callAudioPlayer, hasHermesRoute, !data.isEmpty,
+              data.count <= 8192, data.count.isMultiple(of: 2),
+              let format = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(data.count / 2)),
+              let output = buffer.floatChannelData?[0] else { return }
+        buffer.frameLength = buffer.frameCapacity
+        data.withUnsafeBytes { raw in
+            for i in 0..<Int(buffer.frameLength) {
+                let sample = raw.loadUnaligned(fromByteOffset: i * 2, as: Int16.self)
+                output[i] = Float(Int16(littleEndian: sample)) / 32768
+            }
+        }
+        player.scheduleBuffer(buffer)
+        if !player.isPlaying { player.play() }
+    }
+
+    private func clearHermesCall() {
+        let ended = hermesEnded
+        hermesReady = nil
+        hermesEnded = nil
+        hermesInput = nil
+        usesCallAudio = false
+        ended?()
+    }
     private var zeroSince: Date?
     private var nonZeroSince: Date?
     private var micOffSince: Date?
@@ -78,7 +139,7 @@ final class WatchSpeaker: NSObject, ObservableObject, CXProviderDelegate {
     // Rings the watch; once answered there, the watch speaker plays the iPhone's audio
     func ring() {
         guard state == .idle else { return }
-        if watchesMic && AVAudioApplication.shared.recordPermission == .undetermined {
+        if hermesReady == nil && watchesMic && AVAudioApplication.shared.recordPermission == .undetermined {
             AVAudioApplication.requestRecordPermission { _ in DispatchQueue.main.async { self.ring() } }
             return
         }
@@ -87,7 +148,7 @@ final class WatchSpeaker: NSObject, ObservableObject, CXProviderDelegate {
         } catch {
             return fail(L("Could not set up audio: ", "Ses ayarlanamadı: ") + error.localizedDescription)
         }
-        guard session.availableInputs?.contains(where: { $0.portType == .bluetoothHFP }) == true else {
+        guard session.availableInputs?.contains(where: { hermesReady == nil ? $0.portType == .bluetoothHFP : Self.isHuaweiWatch($0) }) == true else {
             return fail(L("The watch is not connected to the iPhone for calls. In the iPhone's Bluetooth settings, tap the watch to connect it.",
                           "Saat aramalar için iPhone'a bağlı değil. iPhone'un Bluetooth ayarlarından saate dokunup bağla."))
         }
@@ -104,6 +165,7 @@ final class WatchSpeaker: NSObject, ObservableObject, CXProviderDelegate {
                 guard let error else { return }
                 self.callID = nil
                 self.state = .idle
+                self.clearHermesCall()
                 self.fail(L("Could not start the call: ", "Arama başlatılamadı: ") + error.localizedDescription)
             }
         }
@@ -127,14 +189,18 @@ final class WatchSpeaker: NSObject, ObservableObject, CXProviderDelegate {
 
     private func configureSession() throws {
         // mixWithOthers: other apps keep playing, down the same route (to the watch)
-        try session.setCategory(.playAndRecord, mode: .default, options: allowHFP.union(.mixWithOthers))
+        try session.setCategory(.playAndRecord, mode: usesCallAudio ? .voiceChat : .default, options: allowHFP.union(.mixWithOthers))
     }
 
     // Plays silence: keeps the call's audio route open, the watch only hears the other apps
     private func startSilence() {
         guard state != .playing else { return }
-        if let port = session.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) {
+        if let port = session.availableInputs?.first(where: { hermesReady == nil ? $0.portType == .bluetoothHFP : Self.isHuaweiWatch($0) }) {
             try? session.setPreferredInput(port)
+        }
+        guard hermesReady == nil || hasHermesRoute else {
+            stop()
+            return
         }
         do {
             let engine = AVAudioEngine()
@@ -144,15 +210,33 @@ final class WatchSpeaker: NSObject, ObservableObject, CXProviderDelegate {
             silence.frameLength = 16_000
             engine.attach(player)
             engine.connect(player, to: engine.mainMixerNode, format: format)
-            if watchesMic && AVAudioApplication.shared.recordPermission == .granted {
+            if usesCallAudio {
+                let voice = AVAudioPlayerNode()
+                engine.attach(voice)
+                engine.connect(voice, to: engine.mainMixerNode, format: format)
+                callAudioPlayer = voice
+            }
+            let audioInput = hermesInput
+            if (watchesMic || audioInput != nil) && AVAudioApplication.shared.recordPermission == .granted {
                 let input = engine.inputNode
-                input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { [weak self] buffer, _ in
+                let inputFormat = input.outputFormat(forBus: 0)
+                guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+                    stop()
+                    return
+                }
+                input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
+                    if let audioInput {
+                        audioInput(buffer)
+                        return
+                    }
                     guard let data = buffer.floatChannelData?[0] else { return }
                     var peak: Float = 0
                     for i in 0..<Int(buffer.frameLength) { peak = max(peak, abs(data[i])) }
                     DispatchQueue.main.async { self?.micLevel(peak) }
                 }
+                inputTapped = true
             }
+            self.engine = engine
             try engine.start()
             ignoreMic(for: 5)
             lastVolume = session.outputVolume
@@ -163,16 +247,28 @@ final class WatchSpeaker: NSObject, ObservableObject, CXProviderDelegate {
                 DispatchQueue.main.async { self?.volumeChanged(to: volume) }
             }
             routeObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
-                self?.ignoreMic(for: 3)
+                guard let self else { return }
+                if self.hermesReady != nil && !self.hasHermesRoute {
+                    self.stop()
+                } else {
+                    self.ignoreMic(for: 3)
+                }
             }
             player.scheduleBuffer(silence, at: nil, options: .loops)
             player.play()
-            self.engine = engine
             state = .playing
             let route = session.currentRoute.outputs.map(\.portName).joined(separator: ", ")
             status = L("The watch speaker is on (\(route))", "Saatin hoparlörü açık (\(route))")
             log(.info, L("Watch speaker on, output: \(route)", "Saatin hoparlörü açık, çıkış: \(route)"))
-            onPlaying?()
+            if let hermesReady {
+                guard hasHermesRoute else {
+                    stop()
+                    return
+                }
+                hermesReady()
+            } else {
+                onPlaying?()
+            }
         } catch {
             fail(L("Could not open the audio route: ", "Ses yolu açılamadı: ") + error.localizedDescription)
             stop()
@@ -262,14 +358,18 @@ final class WatchSpeaker: NSObject, ObservableObject, CXProviderDelegate {
         volumeObservation = nil
         if let routeObserver { NotificationCenter.default.removeObserver(routeObserver) }
         routeObserver = nil
-        engine?.inputNode.removeTap(onBus: 0)
+        if inputTapped { engine?.inputNode.removeTap(onBus: 0) }
+        inputTapped = false
+        callAudioPlayer?.stop()
+        callAudioPlayer = nil
         engine?.stop()
         engine = nil
         callID = nil
         state = .idle
         status = text
         try? session.setActive(false, options: .notifyOthersOnDeactivation)
-        if wasPlaying { onEnded?() }
+        if hermesEnded != nil { clearHermesCall() }
+        else if wasPlaying { onEnded?() }
     }
 
     private func fail(_ text: String) {

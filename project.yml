@@ -29,9 +29,11 @@ targets:
       path: HuaSideload/Info.plist
       properties:
         CFBundleDisplayName: HuaSideload
-        CFBundleShortVersionString: "1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "2.0.2"
+        CFBundleVersion: "4"
         NSBluetoothAlwaysUsageDescription: Needed to connect to your Huawei watch over Bluetooth.
+        NSMicrophoneUsageDescription: Used to capture dictation when you start a Hermes voice session on your watch.
+        NSSpeechRecognitionUsageDescription: Used to turn your watch dictation into a text draft on your iPhone.
         # voip: the watch speaker rings the watch with a CallKit call (refused without it); audio: keeps it playing when locked
         UIBackgroundModes: [bluetooth-central, audio, voip]
         UILaunchScreen: {}

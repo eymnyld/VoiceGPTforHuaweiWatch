@@ -1,0 +1,42 @@
+.container {
+    width: 336px;
+    height: 480px;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background-color: #000000;
+}
+
+.title {
+    width: 296px;
+    height: 60px;
+    font-size: 38px;
+    color: #FFFFFF;
+    text-align: center;
+}
+
+.status {
+    width: 286px;
+    height: 82px;
+    font-size: 20px;
+    color: #C2D7EF;
+    text-align: center;
+}
+
+.button {
+    width: 276px;
+    height: 56px;
+    margin-top: 10px;
+    border-radius: 28px;
+    background-color: #2A6FDB;
+    justify-content: center;
+    align-items: center;
+}
+
+.label {
+    width: 248px;
+    height: 35px;
+    font-size: 24px;
+    color: #FFFFFF;
+    text-align: center;
+}

@@ -1,0 +1,8 @@
+<div class="container">
+    <text class="title">Voice</text>
+    <text class="status">{{reply}}</text>
+    <div class="button" if="{{!hasVoiceFavorites}}" onclick="startDefault"><text class="label">{{defaultLabel}}</text></div>
+    <div class="button" if="{{favoriteHermes}}" onclick="startProvider('hermes')"><text class="label">Hermes Call</text></div>
+    <div class="button" if="{{favoriteCodex}}" onclick="startProvider('codex')"><text class="label">ChatGPT Voice</text></div>
+    <div class="button" if="{{favoriteClaude}}" onclick="startProvider('claude')"><text class="label">Claude Voice</text></div>
+</div>
